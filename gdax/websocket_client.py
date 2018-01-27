@@ -16,10 +16,15 @@ from websocket import create_connection, WebSocketConnectionClosedException
 from pymongo import MongoClient
 from gdax.gdax_auth import get_auth_headers
 
+import logging
+
+# create logger
+module_logger = logging.getLogger('gdax_hist_builder.gdax_python.websocket_client')
 
 class WebsocketClient(object):
     def __init__(self, url="wss://ws-feed.gdax.com", products=None, message_type="subscribe", mongo_collection=None,
                  should_print=True, auth=False, api_key="", api_secret="", api_passphrase="", channels=None):
+        module_logger.debug('`__init__` called')
         self.url = url
         self.products = products
         self.channels = channels
@@ -33,9 +38,10 @@ class WebsocketClient(object):
         self.api_secret = api_secret
         self.api_passphrase = api_passphrase
         self.should_print = should_print
-        self.mongo_collection = mongo_collection
+        self.mongo_collection = mongo_collection 
 
     def start(self):
+        module_logger.debug('`start` called')
         def _go():
             self._connect()
             self._listen()
@@ -47,13 +53,20 @@ class WebsocketClient(object):
         self.thread.start()
 
     def _connect(self):
+        
+        module_logger.debug('`_connect` called')
+        
         if self.products is None:
             self.products = ["BTC-USD"]
         elif not isinstance(self.products, list):
             self.products = [self.products]
 
+        module_logger.info('products set to: %s', str(self.products))
+        
         if self.url[-1] == "/":
             self.url = self.url[:-1]
+
+        module_logger.info('url set to: %s', str(self.url))
 
         if self.channels is None:
             sub_params = {'type': 'subscribe', 'product_ids': self.products}
@@ -72,31 +85,42 @@ class WebsocketClient(object):
             sub_params['passphrase'] = self.api_passphrase
             sub_params['timestamp'] = timestamp
 
+        module_logger.info('sub_params set to: %s', str(sub_params))
+    
+        module_logger.debug('creating websocket connection...')
         self.ws = create_connection(self.url)
+        module_logger.debug('sending the sub_params as a json dump...')
         self.ws.send(json.dumps(sub_params))
 
         if self.type == "heartbeat":
             sub_params = {"type": "heartbeat", "on": True}
         else:
             sub_params = {"type": "heartbeat", "on": False}
+
+        module_logger.info('sending the heartbeat informations with sub_params set to: %s', str(sub_params))
         self.ws.send(json.dumps(sub_params))
 
     def _listen(self):
+
+        module_logger.debug('`_listen` called')
+
         while not self.stop:
             try:
+                data = None
                 if int(time.time() % 30) == 0:
                     # Set a 30 second ping to keep connection alive
                     self.ws.ping("keepalive")
                 data = self.ws.recv()
                 msg = json.loads(data)
             except ValueError as e:
-                self.on_error(e)
+                self.on_error(e, data)
             except Exception as e:
-                self.on_error(e)
+                self.on_error(e, data)
             else:
                 self.on_message(msg)
 
     def _disconnect(self):
+        module_logger.debug('`_disconnect` called')
         if self.type == "heartbeat":
             self.ws.send(json.dumps({"type": "heartbeat", "on": False}))
         try:
@@ -108,7 +132,9 @@ class WebsocketClient(object):
         self.on_close()
 
     def close(self):
+        module_logger.debug('`close` called')
         self.stop = True
+        # wait for the thread to close / join the main execution routine
         self.thread.join()
 
     def on_open(self):
@@ -128,7 +154,7 @@ class WebsocketClient(object):
     def on_error(self, e, data=None):
         self.error = e
         self.stop = True
-        print('{} - data: {}'.format(e, data))
+        module_logger.error('{} - data: {}'.format(e, data))
 
 
 if __name__ == "__main__":
